@@ -10,7 +10,7 @@ function parseQuietHours(s: string | undefined): [number, number] | null {
 
 export const config = {
   apiBase: import.meta.env.VITE_API_BASE ?? "https://hds.jumapa.in",
-  keycloakUrl: import.meta.env.VITE_KEYCLOAK_URL ?? "",
+  keycloakUrl: import.meta.env.VITE_KEYCLOAK_URL ?? "https://kclk.jumapa.in",
   keycloakRealm: import.meta.env.VITE_KEYCLOAK_REALM ?? "hds",
   keycloakClientId: import.meta.env.VITE_KEYCLOAK_CLIENT_ID ?? "hds-desktop",
   pollIntervalMs: Number(import.meta.env.VITE_POLL_INTERVAL_MS ?? 30000),
