@@ -46,9 +46,5 @@
     "shortDescription": "Cliente de bandeja para HDS",
     "longDescription": "Notificaciones, time tracking y cambio rápido de estados de tickets HDS."
   },
-  "plugins": {
-    "autostart": {
-      "args": ["--minimized"]
-    }
-  }
+  "plugins": {}
 }
