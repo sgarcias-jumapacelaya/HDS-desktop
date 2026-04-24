@@ -1,0 +1,11 @@
+# Files NOT copied into Docker build context (saves time and avoids mounting host artifacts)
+node_modules
+dist
+dist-bundles
+src-tauri/target
+src-tauri/gen
+.env
+.env.local
+*.log
+.git
+.DS_Store
