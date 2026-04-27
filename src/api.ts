@@ -62,4 +62,35 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ content, is_internal: true }),
     }),
+
+  // ---- DM (chat usuario-a-usuario) ----
+  dmUsers: () => request<DmUserSummary[]>("/dm/users"),
+  dmHistory: (userId: number, before?: number) =>
+    request<DmMessage[]>(`/dm/conversations/${userId}/messages${before ? `?before=${before}` : ""}`),
+  dmSend: (userId: number, content: string) =>
+    request<DmMessage>(`/dm/conversations/${userId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    }),
+  dmMarkRead: (userId: number) =>
+    request<{ updated: number }>(`/dm/conversations/${userId}/read`, { method: "POST" }),
 };
+
+export interface DmUserSummary {
+  id: number;
+  username: string;
+  full_name?: string | null;
+  role?: string | null;
+  online: boolean;
+  unread: number;
+  last_message_at?: string | null;
+}
+
+export interface DmMessage {
+  id: number;
+  sender_id: number;
+  recipient_id: number;
+  content: string;
+  created_at?: string | null;
+  read_at?: string | null;
+}

@@ -168,3 +168,57 @@ button.warn    { background: #faa61a; color: #222; }
   padding: 6px 8px;
   font-size: 12px;
 }
+
+/* ---------- DM Panel ---------- */
+.dm-panel {
+  position: relative;
+  width: min(720px, 96vw);
+  height: min(520px, 80vh);
+  background: #1f2227;
+  border: 1px solid #333;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.dm-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  min-height: 0;
+}
+.dm-users {
+  border-right: 1px solid #333;
+  overflow-y: auto;
+  background: #1a1c20;
+}
+.dm-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid #2a2d33;
+  font-size: 13px;
+}
+.dm-user:hover { background: #24272d; }
+.dm-user.active { background: #2d3138; }
+.dm-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dm-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  display: inline-block; flex-shrink: 0;
+}
+.dm-dot.on { background: #3ba55c; box-shadow: 0 0 4px #3ba55c; }
+.dm-dot.off { background: #555; }
+.dm-badge {
+  background: #d83c3e; color: #fff;
+  font-size: 10px; padding: 1px 6px; border-radius: 10px;
+  min-width: 16px; text-align: center;
+}
+.dm-thread { display: flex; flex-direction: column; min-height: 0; }
+.dm-thread-head {
+  padding: 8px 12px;
+  border-bottom: 1px solid #333;
+  display: flex; align-items: center; gap: 6px;
+  background: #24272d;
+}

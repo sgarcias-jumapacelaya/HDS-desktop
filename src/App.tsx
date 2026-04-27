@@ -5,6 +5,7 @@ import { getToken, setToken, clearToken } from "./auth";
 import { loginWithKeycloak } from "./oidc";
 import { connectNotifications, Reconnectable } from "./ws";
 import ChatPanel from "./ChatPanel";
+import DmPanel, { DmEvent } from "./DmPanel";
 import { configureFocus, notifyGrouped } from "./focusMode";
 import { startIdleWatcher, IdleWatcher } from "./idle";
 
@@ -35,6 +36,9 @@ export default function App() {
   const [me, setMe] = useState<{ id: number; full_name?: string } | null>(null);
   const [chatTicket, setChatTicket] = useState<number | null>(null);
   const [wsLive, setWsLive] = useState(false);
+  const [dmOpen, setDmOpen] = useState(false);
+  const [dmEvents, setDmEvents] = useState<DmEvent[]>([]);
+  const [dmUnread, setDmUnread] = useState(0);
   const trackerRef = useRef<TrackerState | null>(null);
   const idleRef = useRef<IdleWatcher | null>(null);
 
@@ -98,10 +102,29 @@ export default function App() {
         if (t === "assigned" || t === "status_changed") {
           api.myTickets().then(setTickets).catch(() => {});
         }
+      } else if (evt.type === "dm") {
+        setWsLive(true);
+        setDmEvents((curr) => [...curr.slice(-50), { kind: "dm", msg: evt.data }]);
+        // Notificacion del SO solo si el panel esta cerrado y no soy el remitente
+        if (!dmOpen && evt.data?.sender_id !== me?.id) {
+          notifyGrouped("HDS Chat", String(evt.data?.content ?? "Nuevo mensaje"));
+        }
+      } else if (evt.type === "dm_read") {
+        setDmEvents((curr) => [...curr.slice(-50), {
+          kind: "dm_read",
+          by_user_id: evt.data?.by_user_id,
+          up_to_id: evt.data?.up_to_id,
+        }]);
+      } else if (evt.type === "presence") {
+        setDmEvents((curr) => [...curr.slice(-50), {
+          kind: "presence",
+          user_id: evt.data?.user_id,
+          online: !!evt.data?.online,
+        }]);
       }
     });
     return () => { conn.close(); setWsLive(false); };
-  }, [authed]);
+  }, [authed, dmOpen, me?.id]);
 
   // Cronómetro tracker (UI tick)
   useEffect(() => {
@@ -240,6 +263,16 @@ export default function App() {
           {unread > 0 && <span className="badge">{unread}</span>}
         </h1>
         <button
+          onClick={() => setDmOpen(true)}
+          title="Chat con otros usuarios conectados"
+          style={{ position: "relative" }}
+        >
+          💬 Chat
+          {dmUnread > 0 && (
+            <span className="badge" style={{ marginLeft: 6 }}>{dmUnread}</span>
+          )}
+        </button>
+        <button
           onClick={async () => {
             await clearToken();
             setAuthed(false);
@@ -314,6 +347,15 @@ export default function App() {
           ticketId={chatTicket}
           currentUserId={me?.id ?? null}
           onClose={() => setChatTicket(null)}
+        />
+      )}
+
+      {dmOpen && (
+        <DmPanel
+          currentUserId={me?.id ?? null}
+          onClose={() => setDmOpen(false)}
+          events={dmEvents}
+          onUnreadChange={setDmUnread}
         />
       )}
     </div>
