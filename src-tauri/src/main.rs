@@ -42,25 +42,60 @@ fn log_line(msg: &str) {
 }
 
 #[tauri::command]
+// Listener OIDC actual; al recibir un nuevo intento de login, cerramos el anterior
+// (releasando el puerto 53682) antes de abrir uno nuevo.
+static OIDC_SERVER: std::sync::Mutex<Option<std::sync::Arc<tiny_http::Server>>> =
+    std::sync::Mutex::new(None);
+
+#[tauri::command]
 async fn oidc_start_listener(state: String) -> Result<OidcResult, String> {
     let expected_state = state;
     tauri::async_runtime::spawn_blocking(move || -> Result<OidcResult, String> {
-        let server = tiny_http::Server::http("127.0.0.1:53682")
-            .map_err(|e| format!("No se pudo abrir loopback :53682 — {e}"))?;
+        // Cerrar listener anterior si quedó vivo (intento previo cancelado).
+        {
+            let mut guard = OIDC_SERVER.lock().unwrap();
+            if let Some(prev) = guard.take() {
+                prev.unblock(); // tiny_http: detiene el accept loop
+                drop(prev);
+            }
+        }
+        // Pequeña espera a que el SO libere el puerto en TIME_WAIT.
+        std::thread::sleep(std::time::Duration::from_millis(150));
+
+        // Reintentos de bind por si el TIME_WAIT tarda.
+        let mut last_err = String::new();
+        let server = (0..10)
+            .find_map(|i| match tiny_http::Server::http("127.0.0.1:53682") {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    last_err = format!("{e}");
+                    std::thread::sleep(std::time::Duration::from_millis(150 * (i + 1)));
+                    None
+                }
+            })
+            .ok_or_else(|| {
+                format!("No se pudo abrir loopback :53682 — {last_err}. Cierra otras instancias de HDS Desktop o procesos en ese puerto.")
+            })?;
+
+        let server = std::sync::Arc::new(server);
+        *OIDC_SERVER.lock().unwrap() = Some(server.clone());
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
-        loop {
+        let result: Result<OidcResult, String> = loop {
             if std::time::Instant::now() > deadline {
-                return Err("Tiempo de espera agotado para el callback OIDC".into());
+                break Err("Tiempo de espera agotado para el callback OIDC".into());
             }
             let req = match server.recv_timeout(std::time::Duration::from_secs(2)) {
                 Ok(Some(r)) => r,
                 Ok(None) => continue,
-                Err(e) => return Err(format!("Error en loopback — {e}")),
+                Err(e) => break Err(format!("Error en loopback — {e}")),
             };
 
             let url_str = format!("http://127.0.0.1:53682{}", req.url());
-            let parsed = url::Url::parse(&url_str).map_err(|e| format!("URL inválida — {e}"))?;
+            let parsed = match url::Url::parse(&url_str) {
+                Ok(u) => u,
+                Err(e) => break Err(format!("URL inválida — {e}")),
+            };
             let mut code: Option<String> = None;
             let mut got_state: Option<String> = None;
             for (k, v) in parsed.query_pairs() {
@@ -76,17 +111,18 @@ async fn oidc_start_listener(state: String) -> Result<OidcResult, String> {
                 .with_header("Content-Type: text/html; charset=utf-8".parse::<tiny_http::Header>().unwrap());
             let _ = req.respond(resp);
 
-            match (code, got_state) {
-                (Some(c), Some(s)) if s == expected_state => {
-                    return Ok(OidcResult {
-                        code: c,
-                        state: s,
-                        redirect_uri: "http://127.0.0.1:53682/callback".into(),
-                    });
-                }
-                _ => return Err("Callback inválido (state mismatch o code ausente)".into()),
-            }
-        }
+            break match (code, got_state) {
+                (Some(c), Some(s)) if s == expected_state => Ok(OidcResult {
+                    code: c,
+                    state: s,
+                    redirect_uri: "http://127.0.0.1:53682/callback".into(),
+                }),
+                _ => Err("Callback inválido (state mismatch o code ausente)".into()),
+            };
+        };
+        // Siempre liberar el slot global, ocupó el puerto o no.
+        *OIDC_SERVER.lock().unwrap() = None;
+        result
     })
     .await
     .map_err(|e| e.to_string())?
