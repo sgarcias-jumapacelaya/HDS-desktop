@@ -50,10 +50,20 @@ fn log_line(msg: &str) {
     eprintln!("{msg}");
 }
 
-// Listener OIDC actual; al recibir un nuevo intento de login, cerramos el anterior
-// (releasando el puerto 53682) antes de abrir uno nuevo.
-static OIDC_SERVER: std::sync::Mutex<Option<std::sync::Arc<tiny_http::Server>>> =
-    std::sync::Mutex::new(None);
+// Estado global del listener OIDC: servidor + puerto + state esperado.
+struct OidcSession {
+    server: std::sync::Arc<tiny_http::Server>,
+    redirect_uri: String,
+    expected_state: String,
+}
+static OIDC_SERVER: std::sync::Mutex<Option<OidcSession>> = std::sync::Mutex::new(None);
+
+// Puertos candidatos para el loopback del callback OIDC.
+// Windows reserva rangos enteros (Hyper-V / WinNAT / Docker / WSL2) y devuelve
+// WSAEACCES (os error 10013) al intentar bind, sin que haya proceso escuchando.
+// Probamos varios; TODOS deben estar registrados como Valid Redirect URI en Keycloak
+// (o usar wildcard `http://127.0.0.1/*` en realms permisivos).
+const OIDC_CANDIDATE_PORTS: &[u16] = &[53682, 47823, 38421, 28394, 18475, 8765];
 
 /// Bind 127.0.0.1:port con SO_REUSEADDR (y SO_REUSEPORT en Unix) para
 /// poder reusar puertos en TIME_WAIT o tras un cierre sucio del proceso anterior.
@@ -72,53 +82,90 @@ fn bind_reuse(port: u16) -> std::io::Result<std::net::TcpListener> {
 }
 
 #[tauri::command]
-async fn oidc_start_listener(state: String) -> Result<OidcResult, String> {
+async fn oidc_start_listener(state: String) -> Result<String, String> {
+    // Bind síncrono: devolvemos el redirect_uri elegido para que JS construya
+    // la URL de autorización con el puerto correcto antes de abrir el navegador.
     let expected_state = state;
-    tauri::async_runtime::spawn_blocking(move || -> Result<OidcResult, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
         // Cerrar listener anterior si quedó vivo (intento previo cancelado).
         {
             let mut guard = OIDC_SERVER.lock().unwrap();
             if let Some(prev) = guard.take() {
-                prev.unblock(); // tiny_http: detiene el accept loop
+                prev.server.unblock();
                 drop(prev);
             }
         }
-        // Pequeña espera a que el SO libere el puerto en TIME_WAIT.
         std::thread::sleep(std::time::Duration::from_millis(150));
 
-        // Reintentos de bind por si el TIME_WAIT tarda. Usamos SO_REUSEADDR
-        // para evitar el típico EADDRINUSE tras un cierre brusco previo.
+        // Probar puertos candidatos. En Windows muchos puertos están reservados
+        // por Hyper-V/WinNAT/Docker (WSAEACCES = os error 10013) sin proceso
+        // escuchando, así que recorremos una lista hasta encontrar uno libre.
         let mut last_err = String::new();
-        let server = (0..10)
-            .find_map(|i| {
-                let listener = match bind_reuse(53682) {
+        let mut bound_port: u16 = 0;
+        let server = OIDC_CANDIDATE_PORTS
+            .iter()
+            .find_map(|&port| {
+                let listener = match bind_reuse(port) {
                     Ok(l) => l,
                     Err(e) => {
-                        last_err = format!("{e}");
-                        std::thread::sleep(std::time::Duration::from_millis(150 * (i + 1)));
+                        last_err = format!("puerto {port}: {e}");
+                        log_line(&format!("oidc: bind {port} falló — {e}"));
                         return None;
                     }
                 };
                 match tiny_http::Server::from_listener(listener, None) {
-                    Ok(s) => Some(s),
+                    Ok(s) => {
+                        bound_port = port;
+                        Some(s)
+                    }
                     Err(e) => {
-                        last_err = format!("{e}");
-                        std::thread::sleep(std::time::Duration::from_millis(150 * (i + 1)));
+                        last_err = format!("puerto {port}: {e}");
                         None
                     }
                 }
             })
             .ok_or_else(|| {
+                let ports = OIDC_CANDIDATE_PORTS
+                    .iter()
+                    .map(|p| p.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 format!(
-                    "No se pudo abrir loopback :53682 — {last_err}. \
-                     Cierra otras instancias de HDS Desktop o ejecuta: \
-                     'sudo fuser -k 53682/tcp' (Linux) / \
-                     'Get-NetTCPConnection -LocalPort 53682 | %{{Stop-Process -Id $_.OwningProcess -Force}}' (Windows)."
+                    "No se pudo abrir ningún puerto loopback de la lista [{ports}] — \
+                     último error: {last_err}. En Windows esto suele deberse a rangos \
+                     reservados por Hyper-V/WinNAT/Docker/WSL2 (no a un proceso ocupándolos). \
+                     Diagnóstico: ejecuta en PowerShell como admin \
+                     'netsh interface ipv4 show excludedportrange protocol=tcp' \
+                     y registra en Keycloak un puerto fuera de esos rangos como Valid Redirect URI."
                 )
             })?;
 
-        let server = std::sync::Arc::new(server);
-        *OIDC_SERVER.lock().unwrap() = Some(server.clone());
+        let redirect_uri = format!("http://127.0.0.1:{bound_port}/callback");
+        log_line(&format!("oidc: escuchando en {redirect_uri}"));
+
+        let session = OidcSession {
+            server: std::sync::Arc::new(server),
+            redirect_uri: redirect_uri.clone(),
+            expected_state,
+        };
+        *OIDC_SERVER.lock().unwrap() = Some(session);
+        Ok(redirect_uri)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn oidc_await_callback() -> Result<OidcResult, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<OidcResult, String> {
+        // Tomamos handles del estado global; el server queda referenciado por Arc.
+        let (server, redirect_uri, expected_state) = {
+            let guard = OIDC_SERVER.lock().unwrap();
+            let s = guard
+                .as_ref()
+                .ok_or_else(|| "Listener OIDC no inicializado".to_string())?;
+            (s.server.clone(), s.redirect_uri.clone(), s.expected_state.clone())
+        };
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
         let result: Result<OidcResult, String> = loop {
@@ -131,7 +178,7 @@ async fn oidc_start_listener(state: String) -> Result<OidcResult, String> {
                 Err(e) => break Err(format!("Error en loopback — {e}")),
             };
 
-            let url_str = format!("http://127.0.0.1:53682{}", req.url());
+            let url_str = format!("{}{}", redirect_uri.trim_end_matches("/callback"), req.url());
             let parsed = match url::Url::parse(&url_str) {
                 Ok(u) => u,
                 Err(e) => break Err(format!("URL inválida — {e}")),
@@ -155,7 +202,7 @@ async fn oidc_start_listener(state: String) -> Result<OidcResult, String> {
                 (Some(c), Some(s)) if s == expected_state => Ok(OidcResult {
                     code: c,
                     state: s,
-                    redirect_uri: "http://127.0.0.1:53682/callback".into(),
+                    redirect_uri: redirect_uri.clone(),
                 }),
                 _ => Err("Callback inválido (state mismatch o code ausente)".into()),
             };
@@ -319,7 +366,7 @@ fn main() {
             MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]),
         ))
-        .invoke_handler(tauri::generate_handler![oidc_start_listener, oidc_exchange_code, oidc_refresh_token])
+        .invoke_handler(tauri::generate_handler![oidc_start_listener, oidc_await_callback, oidc_exchange_code, oidc_refresh_token])
         .setup(|app| {
             log_line("setup() invocado");
 
@@ -359,13 +406,13 @@ fn main() {
         }
     };
 
-    // Garantizamos liberar el puerto 53682 al salir, aunque el SO normalmente
-    // lo libera, esto evita TIME_WAIT prolongado tras un quit explicito.
+    // Garantizamos liberar el puerto del callback al salir, aunque el SO
+    // normalmente lo libera, esto evita TIME_WAIT prolongado tras un quit explicito.
     app.run(|_app, event| {
         if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) {
             if let Ok(mut guard) = OIDC_SERVER.lock() {
                 if let Some(prev) = guard.take() {
-                    prev.unblock();
+                    prev.server.unblock();
                     drop(prev);
                     log_line("Listener OIDC liberado en shutdown");
                 }

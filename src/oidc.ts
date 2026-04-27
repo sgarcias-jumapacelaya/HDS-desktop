@@ -47,13 +47,12 @@ export async function loginWithKeycloak(): Promise<void> {
   const codeChallenge = base64UrlEncode(await sha256(codeVerifier));
   const state = randomString(24);
 
-  // Pedimos a Rust que escuche un puerto loopback y devuelva (code, state, redirect_uri)
-  const listener = invoke<OidcResult>("oidc_start_listener", { state });
+  // Pedimos a Rust que abra el listener loopback. Devuelve el redirect_uri
+  // efectivo (puerto elegido entre los candidatos disponibles en el SO).
+  const redirectUri = await invoke<string>("oidc_start_listener", { state });
 
-  // Construimos URL de autorización; redirect_uri lo decide Rust (puerto efímero).
-  // Pasamos un placeholder y Rust nos confirma el real al iniciar; para evitar esa
-  // complejidad, fijamos un puerto: 53682 (igual al usado por rclone, libre habitualmente).
-  const redirectUri = "http://127.0.0.1:53682/callback";
+  // Esperamos el callback en paralelo a la apertura del navegador.
+  const listener = invoke<OidcResult>("oidc_await_callback");
 
   const params = new URLSearchParams({
     client_id: config.keycloakClientId,
