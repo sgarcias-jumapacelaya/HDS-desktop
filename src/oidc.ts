@@ -70,26 +70,18 @@ export async function loginWithKeycloak(): Promise<void> {
   const result = await listener;
   if (result.state !== state) throw new Error("OIDC state mismatch");
 
-  // Intercambio de code por token
-  const body = new URLSearchParams({
-    grant_type: "authorization_code",
-    client_id: config.keycloakClientId,
-    code: result.code,
-    redirect_uri: redirectUri,
-    code_verifier: codeVerifier,
-  });
-
-  const res = await fetch(tokenUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
-  if (!res.ok) throw new Error(`Token exchange falló: ${res.status} ${await res.text()}`);
-  const tokens = (await res.json()) as {
-    access_token: string;
-    refresh_token?: string;
-    expires_in: number;
-  };
+  // Intercambio code -> token DENTRO de Rust (evita CORS contra Keycloak,
+  // ya que el WebView no tiene Web Origins permitidos por defecto).
+  const tokens = await invoke<{ access_token: string; refresh_token?: string; expires_in: number }>(
+    "oidc_exchange_code",
+    {
+      tokenUrl,
+      clientId: config.keycloakClientId,
+      code: result.code,
+      redirectUri,
+      codeVerifier,
+    },
+  );
 
   await setToken(tokens.access_token);
 }

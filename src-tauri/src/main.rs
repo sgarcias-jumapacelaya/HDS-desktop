@@ -1,7 +1,7 @@
 // Prevents additional console window on Windows in release.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::io::Write;
 use tauri::{
     menu::{Menu, MenuItem},
@@ -15,6 +15,15 @@ struct OidcResult {
     code: String,
     state: String,
     redirect_uri: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct OidcTokens {
+    access_token: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    refresh_token: Option<String>,
+    #[serde(default)]
+    expires_in: u64,
 }
 
 fn log_path() -> std::path::PathBuf {
@@ -159,6 +168,49 @@ async fn oidc_start_listener(state: String) -> Result<OidcResult, String> {
     .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+async fn oidc_exchange_code(
+    token_url: String,
+    client_id: String,
+    code: String,
+    redirect_uri: String,
+    code_verifier: String,
+) -> Result<OidcTokens, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("reqwest build: {e}"))?;
+
+    let form = [
+        ("grant_type", "authorization_code"),
+        ("client_id", client_id.as_str()),
+        ("code", code.as_str()),
+        ("redirect_uri", redirect_uri.as_str()),
+        ("code_verifier", code_verifier.as_str()),
+    ];
+
+    let res = client
+        .post(&token_url)
+        .form(&form)
+        .send()
+        .await
+        .map_err(|e| format!("Error de red contra Keycloak ({token_url}): {e}"))?;
+
+    let status = res.status();
+    let body = res.text().await.unwrap_or_default();
+    if !status.is_success() {
+        log_line(&format!(
+            "Token exchange fallo status={status} body={body}"
+        ));
+        return Err(format!(
+            "Keycloak rechazo el code (status {status}): {body}"
+        ));
+    }
+
+    serde_json::from_str::<OidcTokens>(&body)
+        .map_err(|e| format!("Respuesta invalida de Keycloak: {e} — body: {body}"))
+}
+
 fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Abrir HDS", true, None::<&str>)?;
     let hide = MenuItem::with_id(app, "hide", "Ocultar", true, None::<&str>)?;
@@ -232,7 +284,7 @@ fn main() {
             MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]),
         ))
-        .invoke_handler(tauri::generate_handler![oidc_start_listener])
+        .invoke_handler(tauri::generate_handler![oidc_start_listener, oidc_exchange_code])
         .setup(|app| {
             log_line("setup() invocado");
 
