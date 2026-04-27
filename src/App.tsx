@@ -6,6 +6,7 @@ import { loginWithKeycloak } from "./oidc";
 import { connectNotifications, Reconnectable } from "./ws";
 import ChatPanel from "./ChatPanel";
 import DmPanel, { DmEvent } from "./DmPanel";
+import NewTicketModal from "./NewTicketModal";
 import { configureFocus, notifyGrouped } from "./focusMode";
 import { startIdleWatcher, IdleWatcher } from "./idle";
 
@@ -33,12 +34,13 @@ export default function App() {
   const [now, setNow] = useState(Date.now());
   const [error, setError] = useState<string | null>(null);
   const [busyLogin, setBusyLogin] = useState(false);
-  const [me, setMe] = useState<{ id: number; full_name?: string } | null>(null);
+  const [me, setMe] = useState<{ id: number; full_name?: string; role?: string } | null>(null);
   const [chatTicket, setChatTicket] = useState<number | null>(null);
   const [wsLive, setWsLive] = useState(false);
   const [dmOpen, setDmOpen] = useState(false);
   const [dmEvents, setDmEvents] = useState<DmEvent[]>([]);
   const [dmUnread, setDmUnread] = useState(0);
+  const [newTicketOpen, setNewTicketOpen] = useState(false);
   const trackerRef = useRef<TrackerState | null>(null);
   const idleRef = useRef<IdleWatcher | null>(null);
 
@@ -59,7 +61,7 @@ export default function App() {
 
   useEffect(() => {
     if (!authed) { setMe(null); return; }
-    api.me().then((u) => setMe({ id: u.id, full_name: u.full_name })).catch(() => {});
+    api.me().then((u) => setMe({ id: u.id, full_name: u.full_name, role: u.local_role })).catch(() => {});
   }, [authed]);
 
   // Polling de respaldo (más espaciado si WS está vivo)
@@ -215,6 +217,9 @@ export default function App() {
     return t.accumulatedSec + seg;
   }
 
+  const STAFF_ROLES = ["admin", "team_admin", "project_manager", "analyst", "support", "developer"];
+  const isStaff = !!me?.role && STAFF_ROLES.includes(me.role);
+
   if (!authed) {
     return (
       <div className="app">
@@ -262,6 +267,15 @@ export default function App() {
           HDS {wsLive && <span title="Realtime activo" style={{ color: "#3ba55c" }}>●</span>}
           {unread > 0 && <span className="badge">{unread}</span>}
         </h1>
+        {!isStaff && me && (
+          <button
+            className="primary"
+            onClick={() => setNewTicketOpen(true)}
+            title="Reportar un nuevo ticket"
+          >
+            ＋ Nuevo
+          </button>
+        )}
         <button
           onClick={() => setDmOpen(true)}
           title="Chat con otros usuarios conectados"
@@ -302,21 +316,39 @@ export default function App() {
               <div className="ticket-title">{t.title}</div>
 
               <div className="actions">
-                {t.status === "open" && (
-                  <button className="primary" onClick={() => changeStatus(t, "in_progress")}>Tomar</button>
-                )}
-                {t.status === "in_progress" && (
-                  <button className="primary" onClick={() => changeStatus(t, "resolved")}>Resolver</button>
-                )}
-                {t.status === "resolved" && (
-                  <button onClick={() => changeStatus(t, "in_progress")}>Reabrir</button>
-                )}
-                {t.status !== "closed" && (
-                  <button className="danger" onClick={() => changeStatus(t, "closed")}>Cerrar</button>
+                {isStaff ? (
+                  <>
+                    {t.status === "open" && (
+                      <button className="primary" onClick={() => changeStatus(t, "in_progress")}>Tomar</button>
+                    )}
+                    {t.status === "in_progress" && (
+                      <button className="primary" onClick={() => changeStatus(t, "resolved")}>Resolver</button>
+                    )}
+                    {t.status === "resolved" && (
+                      <button onClick={() => changeStatus(t, "in_progress")}>Reabrir</button>
+                    )}
+                    {t.status !== "closed" && (
+                      <button className="danger" onClick={() => changeStatus(t, "closed")}>Cerrar</button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {t.status !== "closed" && t.status !== "resolved" && (
+                      <button
+                        className="danger"
+                        onClick={() => {
+                          if (confirm(`¿Cancelar el ticket #${t.id}?`)) changeStatus(t, "closed");
+                        }}
+                      >
+                        ✖ Cancelar
+                      </button>
+                    )}
+                  </>
                 )}
                 <button onClick={() => setChatTicket(t.id)}>💬 Chat</button>
               </div>
 
+              {isStaff && (
               <div className="tracker">
                 {isTracking ? (
                   <>
@@ -337,6 +369,7 @@ export default function App() {
                   </>
                 )}
               </div>
+              )}
             </div>
           );
         })}
@@ -356,6 +389,17 @@ export default function App() {
           onClose={() => setDmOpen(false)}
           events={dmEvents}
           onUnreadChange={setDmUnread}
+        />
+      )}
+
+      {newTicketOpen && (
+        <NewTicketModal
+          onClose={() => setNewTicketOpen(false)}
+          onCreated={(t) => {
+            setTickets((curr) => [t, ...curr]);
+            // Refrescar desde server para asegurar consistencia (assignee/project resueltos por IA)
+            api.myTickets().then(setTickets).catch(() => {});
+          }}
         />
       )}
     </div>

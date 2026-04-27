@@ -35,18 +35,38 @@ export interface Ticket {
   status: string;
   priority?: string;
   assignee_id?: number | null;
+  creator_id?: number | null;
   project_id?: number | null;
+  description?: string;
+}
+
+export interface Project {
+  id: number;
+  name: string;
+  key?: string;
 }
 
 export type Phase = "espera" | "proceso" | "cierre";
 
 export const api = {
   myTickets: () => request<Ticket[]>("/tickets/mine"),
+  myCreatedTickets: () => request<Ticket[]>("/tickets/mine?scope=created"),
   setStatus: (id: number, status: string) =>
     request<Ticket>(`/tickets/${id}`, {
       method: "PATCH",
       body: JSON.stringify({ status }),
     }),
+  cancelTicket: (id: number) =>
+    request<Ticket>(`/tickets/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "closed" }),
+    }),
+  createTicket: (payload: { title: string; description: string; priority?: string; project_id?: number }) =>
+    request<Ticket>("/tickets/", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  projects: () => request<Project[]>("/projects/"),
   unreadCount: () => request<{ count: number }>("/notifications/unread-count"),
   notifications: () => request<any[]>("/notifications/"),
   logTime: (ticketId: number, seconds: number, phase: Phase, note?: string) =>
