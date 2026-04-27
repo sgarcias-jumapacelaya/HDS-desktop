@@ -46,6 +46,22 @@ fn log_line(msg: &str) {
 static OIDC_SERVER: std::sync::Mutex<Option<std::sync::Arc<tiny_http::Server>>> =
     std::sync::Mutex::new(None);
 
+/// Bind 127.0.0.1:port con SO_REUSEADDR (y SO_REUSEPORT en Unix) para
+/// poder reusar puertos en TIME_WAIT o tras un cierre sucio del proceso anterior.
+fn bind_reuse(port: u16) -> std::io::Result<std::net::TcpListener> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let sock = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))?;
+    sock.set_reuse_address(true)?;
+    #[cfg(unix)]
+    {
+        let _ = sock.set_reuse_port(true);
+    }
+    let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
+    sock.bind(&addr.into())?;
+    sock.listen(128)?;
+    Ok(sock.into())
+}
+
 #[tauri::command]
 async fn oidc_start_listener(state: String) -> Result<OidcResult, String> {
     let expected_state = state;
@@ -61,19 +77,35 @@ async fn oidc_start_listener(state: String) -> Result<OidcResult, String> {
         // Pequeña espera a que el SO libere el puerto en TIME_WAIT.
         std::thread::sleep(std::time::Duration::from_millis(150));
 
-        // Reintentos de bind por si el TIME_WAIT tarda.
+        // Reintentos de bind por si el TIME_WAIT tarda. Usamos SO_REUSEADDR
+        // para evitar el típico EADDRINUSE tras un cierre brusco previo.
         let mut last_err = String::new();
         let server = (0..10)
-            .find_map(|i| match tiny_http::Server::http("127.0.0.1:53682") {
-                Ok(s) => Some(s),
-                Err(e) => {
-                    last_err = format!("{e}");
-                    std::thread::sleep(std::time::Duration::from_millis(150 * (i + 1)));
-                    None
+            .find_map(|i| {
+                let listener = match bind_reuse(53682) {
+                    Ok(l) => l,
+                    Err(e) => {
+                        last_err = format!("{e}");
+                        std::thread::sleep(std::time::Duration::from_millis(150 * (i + 1)));
+                        return None;
+                    }
+                };
+                match tiny_http::Server::from_listener(listener, None) {
+                    Ok(s) => Some(s),
+                    Err(e) => {
+                        last_err = format!("{e}");
+                        std::thread::sleep(std::time::Duration::from_millis(150 * (i + 1)));
+                        None
+                    }
                 }
             })
             .ok_or_else(|| {
-                format!("No se pudo abrir loopback :53682 — {last_err}. Cierra otras instancias de HDS Desktop o procesos en ese puerto.")
+                format!(
+                    "No se pudo abrir loopback :53682 — {last_err}. \
+                     Cierra otras instancias de HDS Desktop o ejecuta: \
+                     'sudo fuser -k 53682/tcp' (Linux) / \
+                     'Get-NetTCPConnection -LocalPort 53682 | %{{Stop-Process -Id $_.OwningProcess -Force}}' (Windows)."
+                )
             })?;
 
         let server = std::sync::Arc::new(server);

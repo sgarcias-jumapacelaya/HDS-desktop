@@ -3,16 +3,28 @@ import { getToken } from "./auth";
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = await getToken();
-  const res = await fetch(`${config.apiBase}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init.headers ?? {}),
-    },
-  });
+  const url = `${config.apiBase}${path}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(init.headers ?? {}),
+      },
+    });
+  } catch (e: any) {
+    throw new Error(`Network error → ${url} :: ${e?.message ?? e}`);
+  }
   if (!res.ok) {
-    throw new Error(`API ${res.status}: ${await res.text()}`);
+    const body = await res.text().catch(() => "");
+    throw new Error(`HTTP ${res.status} ${url} :: ${body.slice(0, 200)}`);
+  }
+  const ct = res.headers.get("content-type") ?? "";
+  if (!ct.includes("application/json")) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Respuesta no-JSON de ${url} (content-type=${ct}) :: ${body.slice(0, 200)}`);
   }
   return res.json() as Promise<T>;
 }

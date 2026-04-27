@@ -58,7 +58,7 @@ export async function loginWithKeycloak(): Promise<void> {
   const params = new URLSearchParams({
     client_id: config.keycloakClientId,
     response_type: "code",
-    scope: "openid profile email offline_access",
+    scope: "openid profile email",
     redirect_uri: redirectUri,
     state,
     code_challenge: codeChallenge,
