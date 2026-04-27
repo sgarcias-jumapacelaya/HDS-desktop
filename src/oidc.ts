@@ -12,7 +12,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { config } from "./config";
-import { setToken } from "./auth";
+import { setSession } from "./auth";
 
 function base64UrlEncode(bytes: Uint8Array): string {
   let str = "";
@@ -83,5 +83,5 @@ export async function loginWithKeycloak(): Promise<void> {
     },
   );
 
-  await setToken(tokens.access_token);
+  await setSession(tokens);
 }

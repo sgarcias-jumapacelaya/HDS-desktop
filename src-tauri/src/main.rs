@@ -211,6 +211,41 @@ async fn oidc_exchange_code(
         .map_err(|e| format!("Respuesta invalida de Keycloak: {e} — body: {body}"))
 }
 
+#[tauri::command]
+async fn oidc_refresh_token(
+    token_url: String,
+    client_id: String,
+    refresh_token: String,
+) -> Result<OidcTokens, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("reqwest build: {e}"))?;
+
+    let form = [
+        ("grant_type", "refresh_token"),
+        ("client_id", client_id.as_str()),
+        ("refresh_token", refresh_token.as_str()),
+    ];
+
+    let res = client
+        .post(&token_url)
+        .form(&form)
+        .send()
+        .await
+        .map_err(|e| format!("Error de red contra Keycloak ({token_url}): {e}"))?;
+
+    let status = res.status();
+    let body = res.text().await.unwrap_or_default();
+    if !status.is_success() {
+        log_line(&format!("Token refresh fallo status={status} body={body}"));
+        return Err(format!("Keycloak rechazo el refresh (status {status}): {body}"));
+    }
+
+    serde_json::from_str::<OidcTokens>(&body)
+        .map_err(|e| format!("Respuesta invalida de Keycloak (refresh): {e} — body: {body}"))
+}
+
 fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Abrir HDS", true, None::<&str>)?;
     let hide = MenuItem::with_id(app, "hide", "Ocultar", true, None::<&str>)?;
@@ -284,7 +319,7 @@ fn main() {
             MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]),
         ))
-        .invoke_handler(tauri::generate_handler![oidc_start_listener, oidc_exchange_code])
+        .invoke_handler(tauri::generate_handler![oidc_start_listener, oidc_exchange_code, oidc_refresh_token])
         .setup(|app| {
             log_line("setup() invocado");
 

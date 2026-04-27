@@ -1,12 +1,11 @@
 import { config } from "./config";
-import { getToken } from "./auth";
+import { getToken, forceRefresh } from "./auth";
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const token = await getToken();
   const url = `${config.apiBase}${path}`;
-  let res: Response;
-  try {
-    res = await fetch(url, {
+
+  async function doFetch(token: string | null): Promise<Response> {
+    return fetch(url, {
       ...init,
       headers: {
         "Content-Type": "application/json",
@@ -14,9 +13,28 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
         ...(init.headers ?? {}),
       },
     });
+  }
+
+  let token = await getToken();
+  let res: Response;
+  try {
+    res = await doFetch(token);
   } catch (e: any) {
     throw new Error(`Network error → ${url} :: ${e?.message ?? e}`);
   }
+
+  // Si el access token expiro, intentar refresh y reintentar UNA vez.
+  if (res.status === 401) {
+    const fresh = await forceRefresh();
+    if (fresh) {
+      try {
+        res = await doFetch(fresh);
+      } catch (e: any) {
+        throw new Error(`Network error → ${url} :: ${e?.message ?? e}`);
+      }
+    }
+  }
+
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`HTTP ${res.status} ${url} :: ${body.slice(0, 200)}`);
