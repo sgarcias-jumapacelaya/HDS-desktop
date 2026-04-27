@@ -41,7 +41,6 @@ fn log_line(msg: &str) {
     eprintln!("{msg}");
 }
 
-#[tauri::command]
 // Listener OIDC actual; al recibir un nuevo intento de login, cerramos el anterior
 // (releasando el puerto 53682) antes de abrir uno nuevo.
 static OIDC_SERVER: std::sync::Mutex<Option<std::sync::Arc<tiny_http::Server>>> =
