@@ -314,10 +314,27 @@ fn main() {
                 api.prevent_close();
             }
         })
-        .run(tauri::generate_context!());
+        .build(tauri::generate_context!());
 
-    if let Err(e) = result {
-        log_line(&format!("FATAL al arrancar Tauri: {e}"));
-        std::process::exit(1);
-    }
+    let app = match result {
+        Ok(a) => a,
+        Err(e) => {
+            log_line(&format!("FATAL al arrancar Tauri: {e}"));
+            std::process::exit(1);
+        }
+    };
+
+    // Garantizamos liberar el puerto 53682 al salir, aunque el SO normalmente
+    // lo libera, esto evita TIME_WAIT prolongado tras un quit explicito.
+    app.run(|_app, event| {
+        if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) {
+            if let Ok(mut guard) = OIDC_SERVER.lock() {
+                if let Some(prev) = guard.take() {
+                    prev.unblock();
+                    drop(prev);
+                    log_line("Listener OIDC liberado en shutdown");
+                }
+            }
+        }
+    });
 }
