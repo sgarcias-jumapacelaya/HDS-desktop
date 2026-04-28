@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { api, Ticket, Phase } from "./api";
 import { config } from "./config";
 import { getToken, setToken, clearToken } from "./auth";
@@ -265,7 +266,50 @@ export default function App() {
       <div className="topbar">
         <h1>
           HDS {wsLive && <span title="Realtime activo" style={{ color: "#3ba55c" }}>●</span>}
-          {unread > 0 && <span className="badge">{unread}</span>}
+          {unread > 0 && (
+            <>
+              <span
+                className="badge"
+                role="button"
+                tabIndex={0}
+                title={`Abrir HDS web para ver tus ${unread} notificaciones`}
+                style={{ cursor: "pointer" }}
+                onClick={() => {
+                  // Derivar URL web desde apiBase: quitar el sufijo /api si existe.
+                  const webUrl = config.apiBase.replace(/\/api\/?$/, "/") || "https://hds.jumapa.in/";
+                  openUrl(webUrl).catch((e) => setError(`No se pudo abrir el navegador: ${e}`));
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") (e.target as HTMLElement).click();
+                }}
+              >
+                {unread}
+              </span>
+              <button
+                title="Marcar todas las notificaciones como leídas"
+                onClick={async () => {
+                  try {
+                    await api.markAllNotificationsRead();
+                    setUnread(0);
+                  } catch (e: any) {
+                    setError(`No se pudieron marcar como leídas: ${e?.message ?? e}`);
+                  }
+                }}
+                style={{
+                  marginLeft: 6,
+                  padding: "2px 8px",
+                  fontSize: 12,
+                  background: "transparent",
+                  border: "1px solid #555",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  color: "#bbb",
+                }}
+              >
+                ✓
+              </button>
+            </>
+          )}
         </h1>
         {!isStaff && me && (
           <button

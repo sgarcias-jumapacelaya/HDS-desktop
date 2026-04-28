@@ -87,6 +87,8 @@ export const api = {
   projects: () => request<Project[]>("/projects/"),
   unreadCount: () => request<{ count: number }>("/notifications/unread-count"),
   notifications: () => request<any[]>("/notifications/"),
+  markAllNotificationsRead: () =>
+    request<{ updated: number }>("/notifications/read-all", { method: "PATCH" }),
   logTime: (ticketId: number, seconds: number, phase: Phase, note?: string) =>
     request(`/tickets/${ticketId}/time`, {
       method: "POST",
