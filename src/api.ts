@@ -1,8 +1,27 @@
 import { config } from "./config";
 import { getToken, forceRefresh } from "./auth";
+import { ApiError, NetworkError, logError } from "./errors";
+
+function extractDetail(body: string): string | undefined {
+  if (!body) return undefined;
+  try {
+    const j = JSON.parse(body);
+    if (typeof j?.detail === "string") return j.detail;
+    if (Array.isArray(j?.detail)) {
+      // FastAPI validation: lista de objetos con msg
+      const msgs = j.detail.map((d: any) => d?.msg).filter(Boolean);
+      if (msgs.length) return msgs.join("; ");
+    }
+    if (typeof j?.message === "string") return j.message;
+  } catch {
+    // body no-JSON
+  }
+  return undefined;
+}
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const url = `${config.apiBase}${path}`;
+  const context = path.split("?")[0];
 
   async function doFetch(token: string | null): Promise<Response> {
     return fetch(url, {
@@ -20,7 +39,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   try {
     res = await doFetch(token);
   } catch (e: any) {
-    throw new Error(`Network error → ${url} :: ${e?.message ?? e}`);
+    const err = new NetworkError(url, e);
+    logError(err, context);
+    throw err;
   }
 
   // Si el access token expiro, intentar refresh y reintentar UNA vez.
@@ -30,19 +51,37 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       try {
         res = await doFetch(fresh);
       } catch (e: any) {
-        throw new Error(`Network error → ${url} :: ${e?.message ?? e}`);
+        const err = new NetworkError(url, e);
+        logError(err, context);
+        throw err;
       }
     }
   }
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`HTTP ${res.status} ${url} :: ${body.slice(0, 200)}`);
+    const err = new ApiError({
+      status: res.status,
+      url,
+      body,
+      detail: extractDetail(body),
+      context,
+    });
+    logError(err, context);
+    throw err;
   }
   const ct = res.headers.get("content-type") ?? "";
   if (!ct.includes("application/json")) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Respuesta no-JSON de ${url} (content-type=${ct}) :: ${body.slice(0, 200)}`);
+    const err = new ApiError({
+      status: res.status,
+      url,
+      body,
+      detail: `Respuesta no-JSON (content-type=${ct})`,
+      context,
+    });
+    logError(err, context);
+    throw err;
   }
   return res.json() as Promise<T>;
 }
@@ -114,7 +153,47 @@ export const api = {
     }),
   dmMarkRead: (userId: number) =>
     request<{ updated: number }>(`/dm/conversations/${userId}/read`, { method: "POST" }),
+  dmBuzz: (userId: number) =>
+    request<{ ok: boolean }>(`/dm/buzz/${userId}`, { method: "POST" }),
+  dmUpload: async (file: File): Promise<{ url: string; filename: string; mimetype?: string; size: number }> => {
+    const url = `${config.apiBase}/dm/upload`;
+    const token = await getToken();
+    const fd = new FormData();
+    fd.append("file", file);
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        body: fd,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+    } catch (e: any) {
+      const err = new NetworkError(url, e);
+      logError(err, "/dm/upload");
+      throw err;
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      const err = new ApiError({
+        status: res.status,
+        url,
+        body,
+        detail: extractDetail(body),
+        context: "/dm/upload",
+      });
+      logError(err, "/dm/upload");
+      throw err;
+    }
+    return res.json();
+  },
 };
+
+/** Convierte una URL relativa del backend (`/uploads/...`) en absoluta. */
+export function absoluteUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) return path;
+  const base = config.apiBase.replace(/\/api\/?$/, "");
+  return `${base}${path.startsWith("/") ? "" : "/"}${path}`;
+}
 
 export interface DmUserSummary {
   id: number;

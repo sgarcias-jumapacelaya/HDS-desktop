@@ -8,8 +8,10 @@ import { connectNotifications, Reconnectable } from "./ws";
 import ChatPanel from "./ChatPanel";
 import DmPanel, { DmEvent } from "./DmPanel";
 import NewTicketModal from "./NewTicketModal";
+import ErrorLogModal from "./ErrorLogModal";
 import { configureFocus, notifyGrouped } from "./focusMode";
 import { startIdleWatcher, IdleWatcher } from "./idle";
+import { friendlyMessage, logError, getErrorLog, subscribeErrorLog } from "./errors";
 
 interface TrackerState {
   ticketId: number;
@@ -42,8 +44,22 @@ export default function App() {
   const [dmEvents, setDmEvents] = useState<DmEvent[]>([]);
   const [dmUnread, setDmUnread] = useState(0);
   const [newTicketOpen, setNewTicketOpen] = useState(false);
+  const [errorLogOpen, setErrorLogOpen] = useState(false);
+  const [errorLogCount, setErrorLogCount] = useState(getErrorLog().length);
   const trackerRef = useRef<TrackerState | null>(null);
   const idleRef = useRef<IdleWatcher | null>(null);
+
+  // Helper para mostrar errores amigables y dejar registro tecnico.
+  function showError(e: unknown, context?: string) {
+    // Si vino de la capa api ya esta logueado; este logError es idempotente para otros origenes.
+    if (!(e as any)?.name || ((e as any).name !== "ApiError" && (e as any).name !== "NetworkError")) {
+      logError(e, context);
+    }
+    setError(friendlyMessage(e));
+  }
+
+  // Mantener el contador del badge sincronizado con el log.
+  useEffect(() => subscribeErrorLog((entries) => setErrorLogCount(entries.length)), []);
 
   // Configurar focus mode una vez
   useEffect(() => {
@@ -83,7 +99,7 @@ export default function App() {
         lastUnread = n.count;
         setError(null);
       } catch (e: any) {
-        setError(e.message ?? String(e));
+        showError(e, "polling");
       }
     }
 
@@ -118,6 +134,21 @@ export default function App() {
           by_user_id: evt.data?.by_user_id,
           up_to_id: evt.data?.up_to_id,
         }]);
+      } else if (evt.type === "dm_buzz") {
+        setWsLive(true);
+        setDmEvents((curr) => [...curr.slice(-50), {
+          kind: "dm_buzz",
+          from_user_id: evt.data?.from_user_id,
+          from_name: evt.data?.from_name ?? "Alguien",
+          to_user_id: evt.data?.to_user_id,
+        }]);
+        // Si el panel esta cerrado y no soy yo el remitente -> notificar/abrir
+        if (evt.data?.from_user_id !== me?.id) {
+          if (!dmOpen) {
+            notifyGrouped("HDS - Zumbido", `${evt.data?.from_name ?? "Alguien"} te llama!`);
+            setDmOpen(true);
+          }
+        }
       } else if (evt.type === "presence") {
         setDmEvents((curr) => [...curr.slice(-50), {
           kind: "presence",
@@ -167,7 +198,7 @@ export default function App() {
     try {
       await api.setStatus(t.id, status);
       setTickets((curr) => curr.map((x) => (x.id === t.id ? { ...x, status } : x)));
-    } catch (e: any) { setError(e.message); }
+    } catch (e: any) { showError(e, "changeStatus"); }
   }
 
   function startTracker(ticketId: number, phase: Phase) {
@@ -194,7 +225,7 @@ export default function App() {
     try {
       if (total > 5) await api.logTime(cur.ticketId, total, cur.phase);
     } catch (e: any) {
-      setError(e.message);
+      showError(e, "logTime");
     } finally {
       setTracker(null);
     }
@@ -207,7 +238,7 @@ export default function App() {
       await loginWithKeycloak();
       setAuthed(true);
     } catch (e: any) {
-      setError(e.message ?? String(e));
+      showError(e, "login");
     } finally {
       setBusyLogin(false);
     }
@@ -254,9 +285,28 @@ export default function App() {
             </button>
           </details>
           {error && (
-            <div style={{ color: "#f55", fontSize: 11, marginTop: 8 }}>{error}</div>
+            <div style={{ color: "#f55", fontSize: 11, marginTop: 8 }}>
+              {error}{" "}
+              <button
+                onClick={() => setErrorLogOpen(true)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "#fbb",
+                  textDecoration: "underline",
+                  cursor: "pointer",
+                  padding: 0,
+                  fontSize: 11,
+                }}
+              >
+                Detalles
+              </button>
+            </div>
           )}
         </div>
+        {errorLogOpen && (
+          <ErrorLogModal onClose={() => setErrorLogOpen(false)} />
+        )}
       </div>
     );
   }
@@ -277,7 +327,7 @@ export default function App() {
                 onClick={() => {
                   // Derivar URL web desde apiBase: quitar el sufijo /api si existe.
                   const webUrl = config.apiBase.replace(/\/api\/?$/, "/") || "https://hds.jumapa.in/";
-                  openUrl(webUrl).catch((e) => setError(`No se pudo abrir el navegador: ${e}`));
+                  openUrl(webUrl).catch((e) => showError(e, "open-browser"));
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") (e.target as HTMLElement).click();
@@ -292,7 +342,7 @@ export default function App() {
                     await api.markAllNotificationsRead();
                     setUnread(0);
                   } catch (e: any) {
-                    setError(`No se pudieron marcar como leídas: ${e?.message ?? e}`);
+                    showError(e, "markAllRead");
                   }
                 }}
                 style={{
@@ -331,6 +381,16 @@ export default function App() {
           )}
         </button>
         <button
+          onClick={() => setErrorLogOpen(true)}
+          title="Registro de errores"
+          style={{ position: "relative" }}
+        >
+          Log
+          {errorLogCount > 0 && (
+            <span className="badge" style={{ marginLeft: 6 }}>{errorLogCount}</span>
+          )}
+        </button>
+        <button
           onClick={async () => {
             await clearToken();
             setAuthed(false);
@@ -341,7 +401,48 @@ export default function App() {
       </div>
 
       {error && (
-        <div style={{ padding: 8, background: "#5a1d1d", fontSize: 12 }}>{error}</div>
+        <div
+          style={{
+            padding: "8px 10px",
+            background: "#5a1d1d",
+            fontSize: 12,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <span style={{ flex: 1 }}>{error}</span>
+          <button
+            onClick={() => setErrorLogOpen(true)}
+            title="Ver detalles tecnicos"
+            style={{
+              background: "transparent",
+              border: "1px solid #a55",
+              color: "#fdd",
+              borderRadius: 4,
+              padding: "2px 8px",
+              fontSize: 11,
+              cursor: "pointer",
+            }}
+          >
+            Detalles
+          </button>
+          <button
+            onClick={() => setError(null)}
+            title="Ocultar"
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "#fdd",
+              cursor: "pointer",
+              fontSize: 14,
+              lineHeight: 1,
+              padding: "0 4px",
+            }}
+          >
+            x
+          </button>
+        </div>
       )}
 
       <div className="tickets">
@@ -434,6 +535,10 @@ export default function App() {
           events={dmEvents}
           onUnreadChange={setDmUnread}
         />
+      )}
+
+      {errorLogOpen && (
+        <ErrorLogModal onClose={() => setErrorLogOpen(false)} />
       )}
 
       {newTicketOpen && (

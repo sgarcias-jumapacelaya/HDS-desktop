@@ -222,3 +222,18 @@ button.warn    { background: #faa61a; color: #222; }
   display: flex; align-items: center; gap: 6px;
   background: #24272d;
 }
+
+/* Shake (zumbido) */
+@keyframes hds-shake-anim {
+  0%, 100% { transform: translate(0, 0); }
+  10% { transform: translate(-6px, -3px); }
+  20% { transform: translate(6px, 3px); }
+  30% { transform: translate(-5px, 2px); }
+  40% { transform: translate(5px, -2px); }
+  50% { transform: translate(-4px, 3px); }
+  60% { transform: translate(4px, -3px); }
+  70% { transform: translate(-3px, 2px); }
+  80% { transform: translate(3px, -2px); }
+  90% { transform: translate(-2px, 1px); }
+}
+.hds-shake { animation: hds-shake-anim 0.7s ease-in-out; }

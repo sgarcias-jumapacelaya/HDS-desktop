@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, DmUserSummary, DmMessage } from "./api";
+import { api, DmUserSummary, DmMessage, absoluteUrl } from "./api";
+import EmojiPicker from "./EmojiPicker";
+import { friendlyMessage, logError } from "./errors";
+import { notifyGrouped } from "./focusMode";
 
 interface Props {
   currentUserId: number | null;
@@ -12,7 +15,76 @@ interface Props {
 export type DmEvent =
   | { kind: "dm"; msg: DmMessage }
   | { kind: "dm_read"; by_user_id: number; up_to_id: number }
+  | { kind: "dm_buzz"; from_user_id: number; from_name: string; to_user_id: number }
   | { kind: "presence"; user_id: number; online: boolean };
+
+// --- Render helpers --------------------------------------------------------
+
+const MD_IMAGE_RE = /!\[[^\]]*\]\((\S+?)\)/g;
+const BARE_IMAGE_URL_RE = /\bhttps?:\/\/\S+\.(?:png|jpe?g|gif|webp)\b/gi;
+const RELATIVE_IMAGE_RE = /\B\/uploads\/file\/\S+\.(?:png|jpe?g|gif|webp)\b/gi;
+
+interface RenderPart { type: "text" | "image"; value: string }
+
+function parseBubble(content: string): RenderPart[] {
+  const parts: RenderPart[] = [];
+  let cursor = 0;
+  // Reunir todas las coincidencias con su offset
+  const matches: { start: number; end: number; url: string }[] = [];
+  for (const m of content.matchAll(MD_IMAGE_RE)) {
+    matches.push({ start: m.index!, end: m.index! + m[0].length, url: m[1] });
+  }
+  for (const m of content.matchAll(BARE_IMAGE_URL_RE)) {
+    matches.push({ start: m.index!, end: m.index! + m[0].length, url: m[0] });
+  }
+  for (const m of content.matchAll(RELATIVE_IMAGE_RE)) {
+    matches.push({ start: m.index!, end: m.index! + m[0].length, url: m[0] });
+  }
+  matches.sort((a, b) => a.start - b.start);
+  // Eliminar overlaps (preferir markdown sobre bare)
+  const dedup: typeof matches = [];
+  for (const m of matches) {
+    if (dedup.length && m.start < dedup[dedup.length - 1].end) continue;
+    dedup.push(m);
+  }
+  for (const m of dedup) {
+    if (m.start > cursor) {
+      parts.push({ type: "text", value: content.slice(cursor, m.start) });
+    }
+    parts.push({ type: "image", value: m.url });
+    cursor = m.end;
+  }
+  if (cursor < content.length) {
+    parts.push({ type: "text", value: content.slice(cursor) });
+  }
+  return parts;
+}
+
+function playBuzzSound() {
+  try {
+    const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const now = ctx.currentTime;
+    // Dos tonos cortos tipo 'beep beep'
+    [0, 0.18].forEach((offset) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "square";
+      osc.frequency.setValueAtTime(660, now + offset);
+      gain.gain.setValueAtTime(0.0001, now + offset);
+      gain.gain.exponentialRampToValueAtTime(0.18, now + offset + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.14);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + offset);
+      osc.stop(now + offset + 0.16);
+    });
+    setTimeout(() => { try { ctx.close(); } catch { /* ignore */ } }, 600);
+  } catch {
+    // navegador sin audio context disponible
+  }
+}
 
 export default function DmPanel({ currentUserId, onClose, events, onUnreadChange }: Props) {
   const [users, setUsers] = useState<DmUserSummary[]>([]);
@@ -21,7 +93,14 @@ export default function DmPanel({ currentUserId, onClose, events, onUnreadChange
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [showEmoji, setShowEmoji] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [shake, setShake] = useState(false);
+  const [buzzCooldown, setBuzzCooldown] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   // Cargar lista de usuarios al abrir
   useEffect(() => {
@@ -85,6 +164,13 @@ export default function DmPanel({ currentUserId, onClose, events, onUnreadChange
             : x
         ));
       }
+    } else if (ev.kind === "dm_buzz") {
+      // Eco propio: ignorar (ya feedback visual al enviar).
+      if (ev.from_user_id === currentUserId) return;
+      playBuzzSound();
+      setShake(true);
+      setTimeout(() => setShake(false), 700);
+      notifyGrouped("HDS - Zumbido", `${ev.from_name} te llama!`);
     }
   }, [events, activePeerId, currentUserId]);
 
@@ -123,9 +209,76 @@ export default function DmPanel({ currentUserId, onClose, events, onUnreadChange
       setMessages((curr) => curr.some((x) => x.id === msg.id) ? curr : [...curr, msg]);
       setText("");
     } catch (e: any) {
-      setError(e.message ?? String(e));
+      logError(e, "dmSend");
+      setError(friendlyMessage(e));
     } finally {
       setSending(false);
+    }
+  }
+
+  function insertEmoji(emoji: string) {
+    const inp = inputRef.current;
+    if (!inp) {
+      setText((t) => t + emoji);
+      return;
+    }
+    const start = inp.selectionStart ?? text.length;
+    const end = inp.selectionEnd ?? text.length;
+    const next = text.slice(0, start) + emoji + text.slice(end);
+    setText(next);
+    requestAnimationFrame(() => {
+      inp.focus();
+      const pos = start + emoji.length;
+      inp.setSelectionRange(pos, pos);
+    });
+  }
+
+  async function sendBuzz() {
+    if (activePeerId == null || buzzCooldown > 0) return;
+    try {
+      await api.dmBuzz(activePeerId);
+      setBuzzCooldown(20);
+      const t = setInterval(() => {
+        setBuzzCooldown((c) => {
+          if (c <= 1) { clearInterval(t); return 0; }
+          return c - 1;
+        });
+      }, 1000);
+    } catch (e: any) {
+      logError(e, "dmBuzz");
+      setError(friendlyMessage(e));
+    }
+  }
+
+  async function pickFile() {
+    fileRef.current?.click();
+  }
+
+  async function onFileSelected(ev: React.ChangeEvent<HTMLInputElement>) {
+    const file = ev.target.files?.[0];
+    ev.target.value = ""; // reset para permitir mismo archivo otra vez
+    if (!file || activePeerId == null) return;
+    if (!file.type.startsWith("image/")) {
+      setError("Por ahora solo se admiten imagenes.");
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      setError("La imagen supera 8 MB.");
+      return;
+    }
+    setUploading(true);
+    try {
+      const up = await api.dmUpload(file);
+      const md = `![imagen](${up.url})`;
+      const content = text.trim() ? `${text.trim()}\n${md}` : md;
+      const msg = await api.dmSend(activePeerId, content);
+      setMessages((curr) => curr.some((x) => x.id === msg.id) ? curr : [...curr, msg]);
+      setText("");
+    } catch (e: any) {
+      logError(e, "dmUpload");
+      setError(friendlyMessage(e));
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -133,12 +286,20 @@ export default function DmPanel({ currentUserId, onClose, events, onUnreadChange
 
   return (
     <div className="chat-overlay">
-      <div className="dm-panel">
+      <div className={`dm-panel ${shake ? "hds-shake" : ""}`} ref={panelRef}>
         <div className="chat-header">
           <span>Chat de equipo</span>
           <button onClick={onClose}>✕</button>
         </div>
-        {error && <div style={{ color: "#f55", padding: 6, fontSize: 11 }}>{error}</div>}
+        {error && (
+          <div style={{ color: "#f55", padding: 6, fontSize: 11, display: "flex", gap: 6 }}>
+            <span style={{ flex: 1 }}>{error}</span>
+            <button
+              onClick={() => setError(null)}
+              style={{ background: "transparent", border: "none", color: "#fbb", cursor: "pointer" }}
+            >✕</button>
+          </div>
+        )}
 
         <div className="dm-body">
           <div className="dm-users">
@@ -178,9 +339,29 @@ export default function DmPanel({ currentUserId, onClose, events, onUnreadChange
                   )}
                   {messages.map((m) => {
                     const mine = m.sender_id === currentUserId;
+                    const parts = parseBubble(m.content);
                     return (
                       <div key={m.id} className={`chat-msg ${mine ? "mine" : ""}`}>
-                        <div className="chat-bubble">{m.content}</div>
+                        <div className="chat-bubble">
+                          {parts.map((p, i) => p.type === "image" ? (
+                            <a key={i} href={absoluteUrl(p.value)} target="_blank" rel="noreferrer">
+                              <img
+                                src={absoluteUrl(p.value)}
+                                alt="imagen"
+                                style={{
+                                  display: "block",
+                                  maxWidth: "100%",
+                                  maxHeight: 220,
+                                  borderRadius: 6,
+                                  margin: "4px 0",
+                                  cursor: "zoom-in",
+                                }}
+                              />
+                            </a>
+                          ) : (
+                            <span key={i} style={{ whiteSpace: "pre-wrap" }}>{p.value}</span>
+                          ))}
+                        </div>
                         <div className="chat-meta" style={{ fontSize: 10 }}>
                           {m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
                           {mine && (m.read_at ? " ✓✓" : " ✓")}
@@ -189,14 +370,50 @@ export default function DmPanel({ currentUserId, onClose, events, onUnreadChange
                     );
                   })}
                 </div>
-                <div className="chat-input">
+                <div className="chat-input" style={{ position: "relative", display: "flex", gap: 4, alignItems: "center" }}>
                   <input
+                    type="file"
+                    accept="image/*"
+                    ref={fileRef}
+                    onChange={onFileSelected}
+                    style={{ display: "none" }}
+                  />
+                  <button
+                    onClick={pickFile}
+                    disabled={uploading}
+                    title="Adjuntar imagen"
+                    style={{ padding: "4px 8px" }}
+                  >
+                    {uploading ? "…" : "📎"}
+                  </button>
+                  <button
+                    onClick={() => setShowEmoji((v) => !v)}
+                    title="Emojis"
+                    style={{ padding: "4px 8px" }}
+                  >😊</button>
+                  <button
+                    onClick={sendBuzz}
+                    disabled={buzzCooldown > 0}
+                    title={buzzCooldown > 0 ? `Espera ${buzzCooldown}s` : "Enviar zumbido"}
+                    style={{ padding: "4px 8px" }}
+                  >
+                    {buzzCooldown > 0 ? `⚡${buzzCooldown}` : "⚡"}
+                  </button>
+                  <input
+                    ref={inputRef}
+                    style={{ flex: 1 }}
                     value={text}
                     onChange={(e) => setText(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
                     placeholder={`Mensaje a ${activePeer.full_name ?? activePeer.username}...`}
                   />
                   <button className="primary" onClick={send} disabled={sending}>Enviar</button>
+                  {showEmoji && (
+                    <EmojiPicker
+                      onPick={(e) => insertEmoji(e)}
+                      onClose={() => setShowEmoji(false)}
+                    />
+                  )}
                 </div>
               </>
             )}
