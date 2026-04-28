@@ -191,6 +191,12 @@ export const api = {
 /** Convierte una URL relativa del backend (`/uploads/...`) en absoluta. */
 export function absoluteUrl(path: string): string {
   if (/^https?:\/\//i.test(path)) return path;
+  // Las rutas /uploads/* viven bajo el prefijo /api del backend.
+  if (path.startsWith("/uploads/") || path.startsWith("/api/")) {
+    const base = config.apiBase.replace(/\/api\/?$/, "");
+    const norm = path.startsWith("/api/") ? path : `/api${path}`;
+    return `${base}${norm}`;
+  }
   const base = config.apiBase.replace(/\/api\/?$/, "");
   return `${base}${path.startsWith("/") ? "" : "/"}${path}`;
 }
