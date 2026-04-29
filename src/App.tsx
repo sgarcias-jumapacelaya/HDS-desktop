@@ -9,6 +9,7 @@ import ChatPanel from "./ChatPanel";
 import DmPanel, { DmEvent } from "./DmPanel";
 import NewTicketModal from "./NewTicketModal";
 import ErrorLogModal from "./ErrorLogModal";
+import TriageModal from "./TriageModal";
 import { configureFocus, notifyGrouped } from "./focusMode";
 import { startIdleWatcher, IdleWatcher } from "./idle";
 import { friendlyMessage, logError, getErrorLog, subscribeErrorLog } from "./errors";
@@ -46,6 +47,8 @@ export default function App() {
   const [newTicketOpen, setNewTicketOpen] = useState(false);
   const [errorLogOpen, setErrorLogOpen] = useState(false);
   const [errorLogCount, setErrorLogCount] = useState(getErrorLog().length);
+  const [triageOpen, setTriageOpen] = useState(false);
+  const [triageCount, setTriageCount] = useState(0);
   const trackerRef = useRef<TrackerState | null>(null);
   const idleRef = useRef<IdleWatcher | null>(null);
 
@@ -251,6 +254,23 @@ export default function App() {
 
   const STAFF_ROLES = ["admin", "team_admin", "project_manager", "analyst", "support", "developer"];
   const isStaff = !!me?.role && STAFF_ROLES.includes(me.role);
+  const TRIAGE_ROLES = ["admin", "team_admin", "project_manager", "analyst"];
+  const isTriager = !!me?.role && TRIAGE_ROLES.includes(me.role);
+
+  // Poll del contador de triage para los roles autorizados.
+  useEffect(() => {
+    if (!authed || !isTriager) { setTriageCount(0); return; }
+    let cancelled = false;
+    async function tick() {
+      try {
+        const r = await api.triageCount();
+        if (!cancelled) setTriageCount(r.count || 0);
+      } catch { /* silencioso */ }
+    }
+    tick();
+    const id = setInterval(tick, 30000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [authed, isTriager]);
 
   if (!authed) {
     return (
@@ -390,6 +410,18 @@ export default function App() {
             <span className="badge" style={{ marginLeft: 6 }}>{errorLogCount}</span>
           )}
         </button>
+        {isTriager && (
+          <button
+            onClick={() => setTriageOpen(true)}
+            title="Tickets pendientes de triage"
+            style={{ position: "relative" }}
+          >
+            🔍 Triage
+            {triageCount > 0 && (
+              <span className="badge" style={{ marginLeft: 6, background: "#f97316" }}>{triageCount}</span>
+            )}
+          </button>
+        )}
         <button
           onClick={async () => {
             await clearToken();
@@ -540,6 +572,15 @@ export default function App() {
       {errorLogOpen && (
         <ErrorLogModal onClose={() => setErrorLogOpen(false)} />
       )}
+
+      <TriageModal
+        open={triageOpen}
+        meId={me?.id}
+        onClose={() => setTriageOpen(false)}
+        onChanged={() => {
+          api.triageCount().then((r) => setTriageCount(r.count || 0)).catch(() => {});
+        }}
+      />
 
       {newTicketOpen && (
         <NewTicketModal

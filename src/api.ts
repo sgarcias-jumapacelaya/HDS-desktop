@@ -95,6 +95,10 @@ export interface Ticket {
   creator_id?: number | null;
   project_id?: number | null;
   description?: string;
+  ticket_type?: string | null;
+  ai_priority?: string | null;
+  ai_assignee_id?: number | null;
+  created_at?: string;
 }
 
 export interface Project {
@@ -186,6 +190,15 @@ export const api = {
     }
     return res.json();
   },
+
+  // ---- Triage ----
+  triageList: () => request<Ticket[]>("/tickets/triage?limit=200"),
+  triageCount: () => request<{ count: number }>("/tickets/triage/count"),
+  ticketTypes: () => request<{ value: string; label: string }[]>("/tickets/types"),
+  assignableUsers: () =>
+    request<{ id: number; full_name?: string; username?: string; role?: string }[]>("/users/assignable"),
+  patchTicket: (id: number, payload: Record<string, any>) =>
+    request<Ticket>(`/tickets/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
 };
 
 /** Convierte una URL relativa del backend (`/uploads/...`) en absoluta. */
