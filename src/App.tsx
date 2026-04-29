@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { api, Ticket, Phase } from "./api";
+import TicketDetails from "./TicketDetails";
 import { config } from "./config";
 import { getToken, setToken, clearToken } from "./auth";
 import { loginWithKeycloak } from "./oidc";
@@ -491,6 +492,13 @@ export default function App() {
                 <span>{t.priority ?? ""}</span>
               </div>
               <div className="ticket-title">{t.title}</div>
+              {t.created_at && (
+                <div style={{ fontSize: 10, color: "#888", marginBottom: 4 }}>
+                  Creado: {new Date(t.created_at).toLocaleString("es-MX", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                </div>
+              )}
+
+              <TicketDetails ticket={t} />
 
               <div className="actions">
                 {isStaff ? (
@@ -523,6 +531,15 @@ export default function App() {
                   </>
                 )}
                 <button onClick={() => setChatTicket(t.id)}>💬 Chat</button>
+                <button
+                  onClick={() => {
+                    const webBase = config.apiBase.replace(/\/api\/?$/, "/") || "https://hds.jumapa.in/";
+                    openUrl(`${webBase}?print=${t.id}`).catch((e) => showError(e, "print-ticket"));
+                  }}
+                  title="Imprimir / generar PDF en el navegador"
+                >
+                  🖨 Imprimir
+                </button>
               </div>
 
               {isStaff && (

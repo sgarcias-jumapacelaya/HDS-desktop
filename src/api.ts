@@ -199,7 +199,20 @@ export const api = {
     request<{ id: number; full_name?: string; username?: string; role?: string }[]>("/users/assignable"),
   patchTicket: (id: number, payload: Record<string, any>) =>
     request<Ticket>(`/tickets/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  ticketAttachments: (id: number) =>
+    request<TicketAttachment[]>(`/tickets/${id}/attachments`),
 };
+
+export interface TicketAttachment {
+  id: number;
+  filename: string;
+  original_name?: string | null;
+  filepath: string;
+  mimetype?: string | null;
+  size?: number | null;
+  ticket_id?: number | null;
+  created_at?: string;
+}
 
 /** Convierte una URL relativa del backend (`/uploads/...`) en absoluta. */
 export function absoluteUrl(path: string): string {
