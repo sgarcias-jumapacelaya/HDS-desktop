@@ -214,6 +214,15 @@ export interface TicketAttachment {
   created_at?: string;
 }
 
+/**
+ * Construye la URL pública para descargar un adjunto a partir de su nombre
+ * de archivo único almacenado por el backend. El backend expone los archivos
+ * vía `GET /api/uploads/file/{filename}` (busca en todos los subdirectorios).
+ */
+export function attachmentUrl(filename: string): string {
+  return `${config.apiBase}/uploads/file/${encodeURIComponent(filename)}`;
+}
+
 /** Convierte una URL relativa del backend (`/uploads/...`) en absoluta. */
 export function absoluteUrl(path: string): string {
   if (/^https?:\/\//i.test(path)) return path;

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, absoluteUrl, Ticket, TicketAttachment } from "./api";
+import { api, absoluteUrl, attachmentUrl, Ticket, TicketAttachment } from "./api";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 
 interface Props {
@@ -32,6 +32,18 @@ function cleanDescription(desc: string | undefined): string {
     .replace(/!\[[^\]]*\]\([^)]+\)/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+// Resuelve una URL de imagen embebida en la descripción a una URL pública.
+// Acepta data URIs, http(s), `/uploads/file/...`, `/uploads/...`, rutas
+// absolutas del contenedor `/app/uploads/...` y nombres sueltos.
+function resolveImageUrl(src: string): string {
+  if (!src) return src;
+  if (src.startsWith("data:") || /^https?:\/\//i.test(src)) return src;
+  // Rutas absolutas del contenedor: extraer nombre y servir vía /uploads/file/
+  const m = src.match(/(?:^|\/)uploads\/(?:[^/]+\/)*([^/?#]+)$/);
+  if (m) return attachmentUrl(m[1]);
+  return absoluteUrl(src);
 }
 
 function isImage(att: TicketAttachment): boolean {
@@ -122,7 +134,7 @@ export default function TicketDetails({ ticket }: Props) {
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {inlineImages.map((src, i) => {
-                  const url = src.startsWith("data:") || /^https?:/.test(src) ? src : absoluteUrl(src);
+                  const url = resolveImageUrl(src);
                   return (
                     <a
                       key={i}
@@ -164,7 +176,7 @@ export default function TicketDetails({ ticket }: Props) {
             {attachments && attachments.length > 0 && (
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 {attachments.map((a) => {
-                  const url = absoluteUrl(a.filepath);
+                  const url = attachmentUrl(a.filename);
                   const name = a.original_name || a.filename;
                   if (isImage(a)) {
                     return (
