@@ -44,6 +44,63 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # Llave generada sin passphrase: no se define
+          # TAURI_SIGNING_PRIVATE_KEY_PASSWORD a propósito.
+        with:
+          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          releaseName: "HDS Desktop ${{ github.ref_name }}"
+          releaseBody: "Cambios incluidos en esta versión. Las instalaciones existentes se actualizarán automáticamente al abrir la app."
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: true
+          args: ${{ matrix.args }}
+name: Build HDS Desktop
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            args: "--bundles deb,appimage"
+          - platform: windows-latest
+            args: "--bundles msi,nsis"
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
+            build-essential pkg-config file desktop-file-utils libfuse2
+
+      - name: Install JS deps
+        run: npm ci || npm install
+
+      - name: Build & sign with tauri-action
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           # La llave se generó sin passphrase, por eso no se define
           # TAURI_SIGNING_PRIVATE_KEY_PASSWORD. Si en el futuro se rota la
           # llave con passphrase, agregar el secreto y descomentar:
