@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "HDS Desktop",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "identifier": "in.jumapa.hds.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -46,5 +46,14 @@
     "shortDescription": "Cliente de bandeja para HDS",
     "longDescription": "Notificaciones, time tracking y cambio rápido de estados de tickets HDS."
   },
-  "plugins": {}
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/sgarcias-jumapacelaya/HDS-desktop/releases/latest/download/latest.json"
+      ],
+      "dialog": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRCMDM4QTJFMjE2QTM5MEQKUldRTk9Xb2hMb29EUzc4MW1teFlVVmRv"
+    }
+  }
 }

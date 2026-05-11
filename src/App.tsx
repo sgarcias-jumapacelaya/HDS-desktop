@@ -15,6 +15,7 @@ import TriageModal from "./TriageModal";
 import { configureFocus, notifyGrouped } from "./focusMode";
 import { startIdleWatcher, IdleWatcher } from "./idle";
 import { friendlyMessage, logError, getErrorLog, subscribeErrorLog } from "./errors";
+import { checkForUpdatesOnStartup } from "./updater";
 
 interface TrackerState {
   ticketId: number;
@@ -75,6 +76,9 @@ export default function App() {
       quietHours: config.quietHours,
     });
   }, []);
+
+  // Verificar actualizaciones al arrancar (silencioso si no hay internet)
+  useEffect(() => { checkForUpdatesOnStartup(); }, []);
 
   useEffect(() => { trackerRef.current = tracker; }, [tracker]);
 
