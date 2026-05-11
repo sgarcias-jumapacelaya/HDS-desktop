@@ -201,7 +201,25 @@ export const api = {
     request<Ticket>(`/tickets/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
   ticketAttachments: (id: number) =>
     request<TicketAttachment[]>(`/tickets/${id}/attachments`),
+
+  // ---- Comentarios públicos / notas internas (visibles en el ticket) ----
+  ticketComments: (id: number) =>
+    request<TicketComment[]>(`/tickets/${id}/comments`),
+  addTicketComment: (id: number, content: string, isInternal: boolean) =>
+    request<TicketComment>(`/tickets/${id}/comments`, {
+      method: "POST",
+      body: JSON.stringify({ ticket_id: id, content, is_internal: isInternal }),
+    }),
 };
+
+export interface TicketComment {
+  id: number;
+  user_id?: number;
+  content: string;
+  is_internal?: boolean;
+  created_at?: string;
+  author?: { id: number; full_name?: string; username?: string };
+}
 
 export interface TicketAttachment {
   id: number;

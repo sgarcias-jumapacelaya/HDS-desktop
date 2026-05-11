@@ -7,6 +7,7 @@ import { getToken, setToken, clearToken } from "./auth";
 import { loginWithKeycloak } from "./oidc";
 import { connectNotifications, Reconnectable } from "./ws";
 import ChatPanel from "./ChatPanel";
+import CommentsPanel from "./CommentsPanel";
 import DmPanel, { DmEvent } from "./DmPanel";
 import NewTicketModal from "./NewTicketModal";
 import ErrorLogModal from "./ErrorLogModal";
@@ -41,6 +42,7 @@ export default function App() {
   const [busyLogin, setBusyLogin] = useState(false);
   const [me, setMe] = useState<{ id: number; full_name?: string; role?: string } | null>(null);
   const [chatTicket, setChatTicket] = useState<number | null>(null);
+  const [commentsTicket, setCommentsTicket] = useState<number | null>(null);
   const [wsLive, setWsLive] = useState(false);
   const [dmOpen, setDmOpen] = useState(false);
   const [dmEvents, setDmEvents] = useState<DmEvent[]>([]);
@@ -530,6 +532,7 @@ export default function App() {
                     )}
                   </>
                 )}
+                <button onClick={() => setCommentsTicket(t.id)} title="Agregar respuesta / comentario / nota interna">📝 Comentar</button>
                 <button onClick={() => setChatTicket(t.id)}>💬 Chat</button>
                 <button
                   onClick={() => {
@@ -574,6 +577,15 @@ export default function App() {
           ticketId={chatTicket}
           currentUserId={me?.id ?? null}
           onClose={() => setChatTicket(null)}
+        />
+      )}
+
+      {commentsTicket != null && (
+        <CommentsPanel
+          ticketId={commentsTicket}
+          currentUserId={me?.id ?? null}
+          canInternal={isStaff}
+          onClose={() => setCommentsTicket(null)}
         />
       )}
 
