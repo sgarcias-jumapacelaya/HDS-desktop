@@ -32,6 +32,13 @@ const STATUS_LABEL: Record<string, string> = {
   closed: "Cerrado",
 };
 
+const PRIORITY_LABEL: Record<string, string> = {
+  critical: "Critical",
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+};
+
 export default function App() {
   const [authed, setAuthed] = useState(false);
   const [tokenInput, setTokenInput] = useState("");
@@ -53,6 +60,7 @@ export default function App() {
   const [errorLogCount, setErrorLogCount] = useState(getErrorLog().length);
   const [triageOpen, setTriageOpen] = useState(false);
   const [triageCount, setTriageCount] = useState(0);
+  const [typeLabels, setTypeLabels] = useState<Record<string, string>>({});
   const trackerRef = useRef<TrackerState | null>(null);
   const idleRef = useRef<IdleWatcher | null>(null);
 
@@ -79,6 +87,18 @@ export default function App() {
 
   // Verificar actualizaciones al arrancar (silencioso si no hay internet)
   useEffect(() => { checkForUpdatesOnStartup(); }, []);
+
+  // Cargar etiquetas de tipos de ticket (para mostrarlas legibles en los badges)
+  useEffect(() => {
+    if (!authed) return;
+    api.ticketTypes()
+      .then((list) => {
+        const map: Record<string, string> = {};
+        for (const t of list) map[t.value] = t.label;
+        setTypeLabels(map);
+      })
+      .catch(() => {});
+  }, [authed]);
 
   useEffect(() => { trackerRef.current = tracker; }, [tracker]);
 
@@ -493,9 +513,21 @@ export default function App() {
           const elapsed = isTracking ? elapsedSecs(tracker!) : 0;
           return (
             <div className="ticket" key={t.id}>
-              <div className="ticket-header">
-                <span>#{t.id} · {STATUS_LABEL[t.status] ?? t.status}</span>
-                <span>{t.priority ?? ""}</span>
+              <div className="ticket-badges">
+                <span className="ticket-id">#{t.id}</span>
+                <span className={`badge status-${t.status}`}>
+                  {STATUS_LABEL[t.status] ?? t.status}
+                </span>
+                {t.priority && (
+                  <span className={`badge priority-${t.priority}`}>
+                    {PRIORITY_LABEL[t.priority] ?? t.priority}
+                  </span>
+                )}
+                {t.ticket_type && (
+                  <span className="badge type">
+                    {typeLabels[t.ticket_type] ?? t.ticket_type}
+                  </span>
+                )}
               </div>
               <div className="ticket-title">{t.title}</div>
               {t.created_at && (
