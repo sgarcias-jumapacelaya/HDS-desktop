@@ -86,6 +86,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export interface TicketUser {
+  id: number;
+  username?: string;
+  full_name?: string | null;
+  email?: string | null;
+}
+
 export interface Ticket {
   id: number;
   title: string;
@@ -93,6 +100,7 @@ export interface Ticket {
   priority?: string;
   assignee_id?: number | null;
   creator_id?: number | null;
+  creator?: TicketUser | null;
   project_id?: number | null;
   description?: string;
   ticket_type?: string | null;

@@ -544,9 +544,14 @@ export default function App() {
                 )}
               </div>
               <div className="ticket-title">{t.title}</div>
-              {t.created_at && (
+              {(t.created_at || t.creator) && (
                 <div style={{ fontSize: 10, color: "#888", marginBottom: 4 }}>
-                  Creado: {new Date(t.created_at).toLocaleString("es-MX", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                  {t.created_at && (
+                    <>Creado: {new Date(t.created_at).toLocaleString("es-MX", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" })}</>
+                  )}
+                  {t.creator && (
+                    <> · Solicitante: {t.creator.full_name || t.creator.username || `#${t.creator.id}`}</>
+                  )}
                 </div>
               )}
 
