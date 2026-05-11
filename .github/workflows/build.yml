@@ -44,7 +44,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # La llave se generó sin passphrase, por eso no se define
+          # TAURI_SIGNING_PRIVATE_KEY_PASSWORD. Si en el futuro se rota la
+          # llave con passphrase, agregar el secreto y descomentar:
+          # TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           # Si es un push de tag vX.Y.Z, tauri-action crea/actualiza esa release
           # y publica los bundles + el latest.json firmado para el updater.
