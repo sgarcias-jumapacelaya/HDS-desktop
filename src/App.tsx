@@ -15,7 +15,7 @@ import TriageModal from "./TriageModal";
 import { configureFocus, notifyGrouped } from "./focusMode";
 import { startIdleWatcher, IdleWatcher } from "./idle";
 import { friendlyMessage, logError, getErrorLog, subscribeErrorLog } from "./errors";
-import { checkForUpdatesOnStartup } from "./updater";
+import { checkForUpdatesOnStartup, checkForUpdatesInteractive, getAppVersion } from "./updater";
 
 interface TrackerState {
   ticketId: number;
@@ -61,6 +61,7 @@ export default function App() {
   const [triageOpen, setTriageOpen] = useState(false);
   const [triageCount, setTriageCount] = useState(0);
   const [typeLabels, setTypeLabels] = useState<Record<string, string>>({});
+  const [appVersion, setAppVersion] = useState<string>("");
   const trackerRef = useRef<TrackerState | null>(null);
   const idleRef = useRef<IdleWatcher | null>(null);
 
@@ -87,6 +88,9 @@ export default function App() {
 
   // Verificar actualizaciones al arrancar (silencioso si no hay internet)
   useEffect(() => { checkForUpdatesOnStartup(); }, []);
+
+  // Cargar la version de la app para mostrarla en el topbar
+  useEffect(() => { getAppVersion().then(setAppVersion); }, []);
 
   // Cargar etiquetas de tipos de ticket (para mostrarlas legibles en los badges)
   useEffect(() => {
@@ -449,6 +453,16 @@ export default function App() {
             )}
           </button>
         )}
+        <button
+          onClick={async () => {
+            const msg = await checkForUpdatesInteractive();
+            alert(msg);
+          }}
+          title={`Versión actual: v${appVersion || "?"}. Click para buscar actualizaciones.`}
+          style={{ fontSize: 11, opacity: 0.85 }}
+        >
+          v{appVersion || "?"}
+        </button>
         <button
           onClick={async () => {
             await clearToken();

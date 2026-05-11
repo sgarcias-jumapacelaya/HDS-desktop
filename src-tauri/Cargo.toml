@@ -1,6 +1,6 @@
 [package]
 name = "hds-desktop"
-version = "0.2.2"
+version = "0.2.3"
 description = "HDS Desktop tray client"
 authors = ["HDS Team"]
 edition = "2021"

@@ -1,5 +1,6 @@
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { getVersion } from "@tauri-apps/api/app";
 
 /**
  * Verifica si hay una nueva versión publicada en GitHub Releases.
@@ -12,12 +13,33 @@ export async function checkForUpdatesOnStartup(): Promise<void> {
   try {
     const update = await check();
     if (!update?.available) return;
-    // El diálogo nativo (dialog:true) ya pregunta al usuario; aquí solo
-    // procedemos si confirma. downloadAndInstall() respeta esa interacción.
     await update.downloadAndInstall();
     await relaunch();
   } catch (e) {
-    // No molestar al usuario si la verificación falla (offline, etc.)
     console.warn("[updater] check failed:", e);
   }
+}
+
+/**
+ * Versión interactiva: lanzada por un botón en la UI. Devuelve un mensaje
+ * legible para mostrar al usuario.
+ */
+export async function checkForUpdatesInteractive(): Promise<string> {
+  try {
+    const current = await getVersion();
+    const update = await check();
+    if (!update?.available) {
+      return `Estás en la última versión (v${current}).`;
+    }
+    const newVer = update.version ?? "?";
+    await update.downloadAndInstall();
+    await relaunch();
+    return `Actualizado a v${newVer}, reiniciando…`;
+  } catch (e: any) {
+    return `No se pudo verificar actualizaciones: ${e?.message ?? String(e)}`;
+  }
+}
+
+export async function getAppVersion(): Promise<string> {
+  try { return await getVersion(); } catch { return "?"; }
 }
